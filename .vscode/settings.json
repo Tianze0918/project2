@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "locale": "c",
+        "string": "c",
+        "__locale": "c",
+        "string_view": "c",
+        "__string": "c",
+        "array": "c",
+        "vector": "c"
+    }
+}

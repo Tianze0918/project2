@@ -1,0 +1,25 @@
+1. Client_hello passed
+2. Server_hello 
+    A. Server side global hello message initialization changed to the entire serialized message from tlv->val
+    B. Certificate size fixed from strlen(cwd)+16 to strlen(cwd)+17
+
+
+Server_hello correct Type:
+Server_hello            0x20
+1. Nonce                0x01        32
+2. Certificate          0xA0        
+    A. DNS-Name         0xA1
+    B. Public_key       0x02
+    C. Signature        0xA2
+3. Public_key           0x02        91
+4. Handshake_signature  0x21        72
+
+
+
+Server:
+1. Client_hello         Y               Output_sec server
+2. Server_hello         Y               Input_sec server
+
+Client:
+1. Client_hello         Y
+2. Server_hello         Y               Client_finished

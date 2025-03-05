@@ -9,6 +9,9 @@
 
 #define UNUSED(x) (void) (x)
 
+//max DNS length
+#define MAX_DNS_LENGTH 256
+
 // States
 #define SERVER 0
 #define CLIENT 1
@@ -53,6 +56,7 @@ static inline void print_hex(uint8_t* buf, uint16_t len) {
 
 // TLV Utilities
 #define MAX_CHILDREN 10
+#define MAX_SIGNATURE_SIZE 72
 #define VN3 0xFD
 
 typedef struct tlv {
