@@ -2,6 +2,10 @@
 2. Server_hello 
     A. Server side global hello message initialization changed to the entire serialized message from tlv->val
     B. Certificate size fixed from strlen(cwd)+16 to strlen(cwd)+17
+    C. ntohs comment out fixed bad signature
+3. Finished
+    A. send transcript was called in output_sec instead of inpt_sec, thus transcript not sent out but got displayed.
+    B. length of transcript needed to be returned by input_sec, missig before
 
 
 Server_hello correct Type:

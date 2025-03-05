@@ -34,6 +34,7 @@ typedef struct Packet{
 typedef enum{
     BEFORE_CLIENT_HELLO,
     WAITING_SERVER_HELLO,
+    CLIENT_FINISHED,
     CLIENT_DATA_STAGE
 } client_state;
 
@@ -64,7 +65,7 @@ size_t server_hello_message_len = 0;
 
 
 
-void generate_keys(uint8_t* server_hello_message, uint16_t server_hello_message_len){
+void generate_keys(){
     //Deriving Diffie-Hellman Secret
     derive_secret();
 
@@ -84,24 +85,34 @@ void generate_keys(uint8_t* server_hello_message, uint16_t server_hello_message_
 
 
 
-void send_transcript(uint8_t* buf){
+uint16_t send_finished(uint8_t* buf){
     tlv* transcript = create_tlv(TRANSCRIPT);
+    // fprintf(stderr, "send finished\n");
 
 
     uint8_t HMAC_digest[MAC_SIZE];
     uint16_t data_len=server_hello_message_len+client_hello_message_len;
     uint8_t data[data_len];
     memcpy(data, client_hello_message, client_hello_message_len);
-    memcpy(data, server_hello_message, server_hello_message_len);
+    memcpy(data+client_hello_message_len, server_hello_message, server_hello_message_len);
 
     hmac(HMAC_digest, data, data_len);
     add_val(transcript, HMAC_digest, MAC_SIZE);
-    // transcript->length = htons(transcript->length);
 
-    serialize_tlv(buf, transcript);
-    free_tlv(transcript);
+
+    tlv* finished = create_tlv(FINISHED);
+    add_tlv(finished, transcript);
+    uint8_t serialized[1024];
+    uint16_t serialized_len = serialize_tlv(serialized, finished);
+    memcpy(buf, serialized, serialized_len);
+
+    print_tlv_bytes(serialized, serialized_len);
+
+    free_tlv(finished);
      
     p_context.state.c_state=CLIENT_DATA_STAGE;
+
+    return serialized_len;
 }
 
 
@@ -371,29 +382,56 @@ void server_add_handshake_signature(tlv* server_hello){
 
 
 void verify_handshake_signature(tlv* hello_message){
+    tlv* server_signature = create_tlv(HANDSHAKE_SIGNATURE);
+    // Fill in signature
+    uint16_t data_size = 1024;
+    uint8_t data[data_size];
+    uint8_t* p = data;
+
+    memcpy(p, client_hello_message, client_hello_message_len);
+    p += client_hello_message_len;
+
+
     tlv* nonce=get_tlv(hello_message, NONCE);
+    uint8_t serialized_nonce[1024];    
+    uint16_t serialized_nonce_len = serialize_tlv(serialized_nonce, nonce);
+    memcpy(p, serialized_nonce, serialized_nonce_len);
+    p +=serialized_nonce_len;
+    
+
+
     tlv* certificate=get_tlv(hello_message, CERTIFICATE);
-    tlv* public_key=get_tlv(certificate, PUBLIC_KEY);
+    uint8_t serialized_certificate[1024];
+    uint16_t serialized_certificate_len = serialize_tlv(serialized_certificate, certificate);
+    memcpy(p, serialized_certificate, serialized_certificate_len);
+    p += serialized_certificate_len;
 
-    uint16_t handshake_length = client_hello_message_len + nonce->length + certificate->length + public_key->length;
-    uint8_t handshake_data [handshake_length];
-    uint8_t* hs_p=handshake_data;
+    
 
-    memcpy(hs_p, client_hello_message, client_hello_message_len);
-    hs_p += client_hello_message_len;
+    tlv* public_key=get_tlv(hello_message, PUBLIC_KEY);
+    uint8_t serialized_public_key[1024];
+    uint16_t serialized_public_key_len = serialize_tlv(serialized_public_key, public_key);
+    memcpy(p, serialized_public_key, serialized_public_key_len);
+    p += serialized_public_key_len;
 
-    memcpy(hs_p, nonce->val, nonce->length);
-    hs_p += nonce->length;
+   
+    data_size = client_hello_message_len + 
+                serialized_nonce_len + 
+                serialized_certificate_len + 
+                serialized_public_key_len;
 
-    memcpy(hs_p, certificate->val, certificate->length);
-    hs_p += certificate->length;
 
-    memcpy(hs_p, public_key->val, public_key->length);
-    hs_p += public_key->length;
     
     tlv* hand_shake_sig = get_tlv(hello_message, HANDSHAKE_SIGNATURE);
+    uint8_t serialized_hs[1024];    
+    uint16_t serialized_hs_len = serialize_tlv(serialized_hs, hand_shake_sig);
+
+
     load_peer_public_key(public_key->val, public_key->length);
-    int hand_shake_result = verify(hand_shake_sig->val, hand_shake_sig->length, handshake_data, handshake_length, ec_peer_public_key);
+    // load_peer_public_key(serialized_public_key, serialized_public_key_len);
+
+    int hand_shake_result = verify(serialized_hs, serialized_hs_len, data, data_size, ec_peer_public_key);
+
     if (hand_shake_result==0){
         fprintf(stderr, "handshake_signature verification failed\n");
         exit(3);
@@ -403,24 +441,12 @@ void verify_handshake_signature(tlv* hello_message){
     }
 }
 
-void client_finished(tlv* message,  uint8_t* buf){
+uint16_t client_finished(tlv* message,  uint8_t* buf){
     tlv* server_hello = get_tlv(message, SERVER_HELLO);
     if (server_hello==NULL){
         fprintf(stderr, "Expecting server_hello, received something else\n");
         exit(6);
     }
-
-
-    // Client storing server_hello
-    server_hello_message = malloc(server_hello->length);
-    if (server_hello_message == NULL) {
-        fprintf(stderr, "Memory allocation for server_hello_message failed\n");
-        exit(1);
-    }
-    memcpy(server_hello_message, server_hello->val, server_hello->length);
-    server_hello_message_len = server_hello->length;
-
-
 
     // Get the CA public key
     char *cwd = getcwd(NULL, 0);
@@ -429,7 +455,7 @@ void client_finished(tlv* message,  uint8_t* buf){
         exit(10);
     }
 
-    uint16_t path_max=strlen(cwd)+17;
+    uint16_t path_max=strlen(cwd)+19;
     char full_path[path_max];
     size_t len = strlen(cwd);
     if (cwd[len - 1] == '/') {
@@ -445,45 +471,60 @@ void client_finished(tlv* message,  uint8_t* buf){
     tlv* public_key=get_tlv(certificate, PUBLIC_KEY);
     tlv* certificate_signature=get_tlv(certificate, SIGNATURE);
 
-    uint16_t DNS_length=DNS->length;
-    uint16_t public_key_length=public_key->length;
-    uint16_t DNS_key_length=DNS_length+public_key_length;
+
+
+    uint8_t serialized_dns[1024];
+    uint16_t serialized_dns_len = serialize_tlv(serialized_dns, DNS);
+
+    uint8_t serialized_public_key[1024];
+    uint16_t serialized_public_key_len = serialize_tlv(serialized_public_key, public_key);
+
+    uint8_t serialized_signature[1024];
+    uint16_t serialized_signature_len = serialize_tlv(serialized_signature, certificate_signature);
+
+    uint16_t DNS_key_length=serialized_dns_len+serialized_public_key_len;
 
     uint8_t DNS_key[DNS_key_length];
-    uint8_t* pointer=DNS_key;
-    memcpy(DNS_key, DNS->val, DNS_length);
-    pointer+=DNS_length;
-    memcpy(DNS_key, public_key->val, public_key_length);
+    uint8_t* p=DNS_key;
+    memcpy(p, serialized_dns, serialized_dns_len);
+    p+=serialized_dns_len;
+    memcpy(p, serialized_public_key, serialized_public_key_len);
 
 
     // Verify certificate signature
     int certi_sig_result=verify(certificate_signature->val, certificate_signature->length, DNS_key, DNS_key_length, ec_ca_public_key);
-    if (certi_sig_result==0){
+    if (certi_sig_result!=1){
         fprintf(stderr, "Certificate signature failed\n");
         exit(1);
     }
-
+    fprintf(stderr, "certificate result %u\n", certi_sig_result);
+    
     // Verify dns name
-    if (memcmp(p_context.DNS, DNS->val, DNS_length)!=0){
+    if (memcmp(p_context.DNS, DNS->val, DNS->length)!=0){
         fprintf(stderr, "Bad DNS name\n");
         exit(2);
     }
+    
 
     // Verify handhsake-signature
     verify_handshake_signature(server_hello);
+    
 
     // Derive shared secret, ENC, MAC keys
-    generate_keys(server_hello->val, server_hello->length);
+    generate_keys();
+    // fprintf(stderr, "generate keys\n");
 
     // Generate & send transcript
-    send_transcript(buf);
-}
+    uint16_t finished_len = send_finished(buf);
+
+    return finished_len;
+}   
 
 
 
 
 void init_sec(int type, char* host) {
-    fprintf(stderr, "Entered init\n");
+    // fprintf(stderr, "Entered init\n");
     init_io();
     if (type==SERVER){
         p_context.type=SERVER;
@@ -508,7 +549,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             client_add_public_key(client_hello);
 
         
-            fprintf(stderr, "Client_hello filled\n");
+            // fprintf(stderr, "Client_hello filled\n");
             //Client side client_hello
             client_hello_message = malloc(client_hello->length);
             if (client_hello_message == NULL) {
@@ -528,16 +569,28 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             uint16_t len = serialized_len;
             free_tlv(client_hello);
 
-            fprintf(stderr, "Client_hello serialized\n");
+            // fprintf(stderr, "Client_hello serialized\n");
 
 
             p_context.state.c_state =  WAITING_SERVER_HELLO;
             return len;
         }else if (p_context.state.c_state==WAITING_SERVER_HELLO){
             return 0;       //Shouldn't input anything to security layer when still waiting for server hello
-        }else{   //Data stage
-            uint16_t len=data_encryption(buf, max_length);
+        }else if (p_context.state.c_state==CLIENT_FINISHED){
+            tlv* message = deserialize_tlv(server_hello_message, server_hello_message_len);
+            uint16_t len = client_finished(message, buf);
+
+            // fprintf(stderr, "Buf content: \n");
+            tlv* finished = deserialize_tlv(buf, len);
+            print_tlv_bytes(buf, len);
+
+
             return len;
+        }
+        else{   //Data stage
+            // uint16_t len=data_encryption(buf, max_length);
+            // return len;
+            return 0;
         }
     }else{
         if (p_context.state.s_state==CLIENT_HELLO_RECEIVED){
@@ -626,28 +679,31 @@ void output_sec(uint8_t* buf, size_t length) {
             verify_transcript(transcript);
         }else if (p_context.state.s_state==SERVER_DATA_STAGE){
             tlv* iv = get_tlv(message, IV);
-            // iv->length=ntohs(iv->length);
             tlv* ciphertext = get_tlv(message, CIPHERTEXT);
-            // ciphertext->length=ntohs(ciphertext->length);
             tlv* mac = get_tlv(message, MAC);
-            // mac->length=ntohs(mac->length);
             data_decryption(iv, ciphertext, mac);
         }else{          //CLIENT_HELLO_RECEIVED
             return;
         }
     }else{
         if (p_context.state.c_state==WAITING_SERVER_HELLO){
-            fprintf(stderr, "Entered output_sec\n");
-            client_finished(message, buf);
-            p_context.state.c_state=CLIENT_DATA_STAGE;
+            // Client storing server_hello
+            uint8_t serialized[1024];
+            uint16_t serialized_len = serialize_tlv(serialized, message);
+            server_hello_message = malloc(serialized_len);
+            if (server_hello_message == NULL) {
+                fprintf(stderr, "Memory allocation for server_hello_message failed\n");
+                exit(1);
+            }
+            memcpy(server_hello_message, serialized, serialized_len);
+            server_hello_message_len = serialized_len;
+
+            p_context.state.c_state=CLIENT_FINISHED;
         }else if (p_context.state.c_state==CLIENT_DATA_STAGE){
-            tlv* iv = get_tlv(message, IV);
-            // iv->length=ntohs(iv->length);
-            tlv* ciphertext = get_tlv(message, CIPHERTEXT);
-            // ciphertext->length=ntohs(ciphertext->length);
-            tlv* mac = get_tlv(message, MAC);
-            // mac->length=ntohs(mac->length);
-            data_decryption(iv, ciphertext, mac);
+            // tlv* iv = get_tlv(message, IV);
+            // tlv* ciphertext = get_tlv(message, CIPHERTEXT);
+            // tlv* mac = get_tlv(message, MAC);
+            // data_decryption(iv, ciphertext, mac);
         }
         else{
             return;     //BEFORE_CLIENT_HELLO, shouldn't output anything

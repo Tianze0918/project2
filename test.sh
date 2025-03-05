@@ -1,8 +1,8 @@
 ./helper compile
-./helper test test_server_hello 
+./helper test test_finished 
 
-code ./results/test_server_hello_refclient.out
-code ./results/test_server_hello_yourserver.out
+code ./results/test_finished_yourclient.out
+code ./results/test_finished_refserver.out
 #code ./results/test_self_yourserver.out  
 # open -n -a "Visual Studio Code" ./results/test_self_yourclient.out
 # open -n -a "Visual Studio Code" ./results/test_client_refserver.out
