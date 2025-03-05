@@ -87,7 +87,6 @@ void generate_keys(){
 
 uint16_t send_finished(uint8_t* buf){
     tlv* transcript = create_tlv(TRANSCRIPT);
-    // fprintf(stderr, "send finished\n");
 
 
     uint8_t HMAC_digest[MAC_SIZE];
@@ -106,11 +105,13 @@ uint16_t send_finished(uint8_t* buf){
     uint16_t serialized_len = serialize_tlv(serialized, finished);
     memcpy(buf, serialized, serialized_len);
 
-    print_tlv_bytes(serialized, serialized_len);
+    // print_tlv_bytes(serialized, serialized_len);
 
     free_tlv(finished);
      
     p_context.state.c_state=CLIENT_DATA_STAGE;
+
+    fprintf(stderr, "send finished\n");
 
     return serialized_len;
 }
@@ -427,18 +428,20 @@ void verify_handshake_signature(tlv* hello_message){
     uint16_t serialized_hs_len = serialize_tlv(serialized_hs, hand_shake_sig);
 
 
-    load_peer_public_key(public_key->val, public_key->length);
-    // load_peer_public_key(serialized_public_key, serialized_public_key_len);
+    // load_peer_public_key(public_key->val, public_key->length);
+    tlv* cert_pub_key = get_tlv(certificate, PUBLIC_KEY);
+    load_peer_public_key(cert_pub_key->val, cert_pub_key->length);
 
-    int hand_shake_result = verify(serialized_hs, serialized_hs_len, data, data_size, ec_peer_public_key);
 
-    if (hand_shake_result==0){
+    // int hand_shake_result = verify(serialized_hs, serialized_hs_len, data, data_size, ec_peer_public_key);
+    int hand_shake_result = verify(hand_shake_sig->val, hand_shake_sig->length, data, data_size, ec_peer_public_key);
+    fprintf(stderr, "signature result %u\n", hand_shake_result);
+    if (hand_shake_result!=1){
         fprintf(stderr, "handshake_signature verification failed\n");
         exit(3);
-    }else if (hand_shake_result==0){
-        fprintf(stderr, "handshake_signature verification parameter processing error\n");
-        exit(3);
     }
+
+    load_peer_public_key(public_key->val, public_key->length);
 }
 
 uint16_t client_finished(tlv* message,  uint8_t* buf){
@@ -497,7 +500,7 @@ uint16_t client_finished(tlv* message,  uint8_t* buf){
         fprintf(stderr, "Certificate signature failed\n");
         exit(1);
     }
-    fprintf(stderr, "certificate result %u\n", certi_sig_result);
+   
     
     // Verify dns name
     if (memcmp(p_context.DNS, DNS->val, DNS->length)!=0){
@@ -582,7 +585,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
             // fprintf(stderr, "Buf content: \n");
             tlv* finished = deserialize_tlv(buf, len);
-            print_tlv_bytes(buf, len);
+            // print_tlv_bytes(buf, len);
 
 
             return len;
@@ -618,7 +621,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             uint16_t serialized_len = serialize_tlv(serialized, server_hello);
             memcpy(server_hello_message, serialized, serialized_len);
             server_hello_message_len = serialized_len;
-            print_tlv_bytes(server_hello_message, server_hello_message_len);
+            // print_tlv_bytes(server_hello_message, server_hello_message_len);
 
             free_tlv(server_hello);
             
@@ -687,6 +690,8 @@ void output_sec(uint8_t* buf, size_t length) {
         }
     }else{
         if (p_context.state.c_state==WAITING_SERVER_HELLO){
+            // message->length=ntohs(message->length);
+
             // Client storing server_hello
             uint8_t serialized[1024];
             uint16_t serialized_len = serialize_tlv(serialized, message);
