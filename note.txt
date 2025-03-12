@@ -8,6 +8,8 @@
     B. length of transcript needed to be returned by input_sec, missig before
     C. Verification uses public key of server from certificate, the public key in server hello message is randomly generated each time
     D. Peer public key is from certification for verifiation, then it needs to be loaded again as public key in server hello message
+4. Client  
+    A. Decrption had size of uint8_t, which truncated actual size of ciphertext (>256)
 
 * Does server certificate public key equals to public key in server hello?
 

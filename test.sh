@@ -1,8 +1,9 @@
 ./helper compile
-./helper test test_finished 
+./helper test test_encrypt_and_mac_server 
 
-code ./results/test_finished_yourclient.out
-code ./results/test_finished_refserver.out
+code ./results/test_encrypt_and_mac_client_refclient.out 
+code ./results/test_encrypt_and_mac_client_yourserver.out
+# code ./results/test_encrypt_and_mac_client_yourclient.out 
 #code ./results/test_self_yourserver.out  
 # open -n -a "Visual Studio Code" ./results/test_self_yourclient.out
 # open -n -a "Visual Studio Code" ./results/test_client_refserver.out

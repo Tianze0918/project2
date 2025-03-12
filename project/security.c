@@ -65,6 +65,7 @@ size_t server_hello_message_len = 0;
 
 
 
+
 void generate_keys(){
     //Deriving Diffie-Hellman Secret
     derive_secret();
@@ -105,29 +106,49 @@ uint16_t send_finished(uint8_t* buf){
     uint16_t serialized_len = serialize_tlv(serialized, finished);
     memcpy(buf, serialized, serialized_len);
 
-    // print_tlv_bytes(serialized, serialized_len);
+    print_tlv_bytes(serialized, serialized_len);
 
     free_tlv(finished);
      
     p_context.state.c_state=CLIENT_DATA_STAGE;
 
     fprintf(stderr, "send finished\n");
+    fprintf(stderr, "length is %u\n", client_hello_message_len+server_hello_message_len);
 
     return serialized_len;
 }
 
 
-void verify_transcript(tlv* transcript){
+void verify_transcript(tlv* message){
+    // fprintf(stderr, "Inside verify_transcript\n");
+    tlv* transcript = get_tlv(message, TRANSCRIPT);
+
 
     uint8_t HMAC_digest[MAC_SIZE];
     uint16_t data_len=server_hello_message_len+client_hello_message_len;
     uint8_t data[data_len];
-    uint8_t* p = data;
-    memcpy(p, client_hello_message, client_hello_message_len);
-    p+=client_hello_message_len;
-    memcpy(p, server_hello_message, server_hello_message_len);
+    memcpy(data, client_hello_message, client_hello_message_len);
+    memcpy(data+client_hello_message_len, server_hello_message, server_hello_message_len);
 
     hmac(HMAC_digest, data, data_len);
+
+    fprintf(stderr, "length is %u\n", client_hello_message_len+server_hello_message_len);
+
+   
+    // Server own transcript
+    tlv* new_transcript = create_tlv(TRANSCRIPT);
+    add_val(new_transcript, HMAC_digest, MAC_SIZE);
+    tlv* finished = create_tlv(FINISHED);
+    add_tlv(finished, new_transcript);
+    uint8_t serialized[1024];
+    uint16_t serialized_len = serialize_tlv(serialized, finished);
+    print_tlv_bytes(serialized, serialized_len);
+
+    // Client transcript
+    uint8_t serialized_t[1024];
+    uint16_t serialized_t_len = serialize_tlv(serialized_t, message);
+    print_tlv_bytes(serialized_t, serialized_t_len);
+
     if (memcmp(HMAC_digest, transcript->val, transcript->length)!=0){
         fprintf(stderr, "Server client HMAC doesn't match\n");
         exit(4);
@@ -139,26 +160,39 @@ void verify_transcript(tlv* transcript){
 
 
 void create_hmac_digest(uint8_t* hmac_digest, tlv* iv, tlv* ciphertext){
-    uint8_t iv_serail_size=18;
+    uint16_t iv_serail_size=1000;
     uint8_t iv_buf[iv_serail_size];
-    uint8_t iv_len=serialize_tlv(iv_buf, iv);
-
+    uint16_t iv_len=serialize_tlv(iv_buf, iv);
 
     uint8_t ciphertext_buf[1000];
-    uint8_t ciphertext_len=serialize_tlv(ciphertext_buf, ciphertext);
-
+    uint16_t ciphertext_len=serialize_tlv(ciphertext_buf, ciphertext);
     
-    uint8_t data[iv_len+ciphertext_len];
+    uint16_t data_len=iv_len+ciphertext_len;
+    uint8_t data[data_len];
     uint8_t* p=data;
     memcpy(p, iv_buf, iv_len); 
     p+=iv_len;
     memcpy(p, ciphertext_buf, ciphertext_len);
-    uint16_t data_len=iv_len+ciphertext_len;
 
     hmac(hmac_digest, data, data_len);
 }
 
+void data_decryption(tlv* iv, tlv* ciphertext, tlv* mac){
+    uint8_t hmac_digest[1000];
+    create_hmac_digest(hmac_digest, iv, ciphertext);
+    if (memcmp(hmac_digest, mac->val, mac->length)!=0){
+        fprintf(stderr, "HMAC digest doesn't match MAC code\n");
+        exit(5);
+    }
+
+    uint8_t buf[1000];
+    ssize_t len = decrypt_cipher(buf, ciphertext->val, ciphertext->length, iv->val);
+
+    output_io(buf, len);
+}
+
 uint16_t data_encryption(uint8_t* buf, size_t max_length){
+    fprintf(stderr, "entered encryption\n");
     size_t plain_txt_size=0;
 
     if (max_length < (60+16)) {
@@ -204,29 +238,6 @@ uint16_t data_encryption(uint8_t* buf, size_t max_length){
     return len;
 }
 
-
-
-
-
-
-void data_decryption(tlv* iv, tlv* ciphertext, tlv* mac){
-    uint8_t hmac_digest[MAC_SIZE];
-    create_hmac_digest(hmac_digest, iv, ciphertext);
-    if (memcmp(hmac_digest, mac->val, mac->length)!=0){
-        fprintf(stderr, "HMAC digest doesn't match MAC code\n");
-        exit(5);
-    }
-
-    uint8_t buf[1000];
-    ssize_t len = decrypt_cipher(buf, ciphertext->val, ciphertext->length, iv->val);
-
-    output_io(buf, len);
-}
-
-
-
-
-
 void client_add_nonce(tlv* client_hello){
     tlv* client_nonce = create_tlv(NONCE);
     uint8_t nonce[NONCE_SIZE];
@@ -237,8 +248,6 @@ void client_add_nonce(tlv* client_hello){
     add_tlv(client_hello, client_nonce);          //add nonce object into client_hello tlv object
 }
 
-
-
 void client_add_public_key(tlv* client_hello){
     tlv* client_public_key = create_tlv(PUBLIC_KEY);
     generate_private_key();                       //generate public/private key pair
@@ -248,9 +257,6 @@ void client_add_public_key(tlv* client_hello){
     add_tlv(client_hello, client_public_key);
 }
 
-
-
-
 void server_add_nonce(tlv* server_hello){
     tlv* server_nonce = create_tlv(NONCE);
     uint8_t nonce[NONCE_SIZE];
@@ -259,9 +265,6 @@ void server_add_nonce(tlv* server_hello){
     // server_nonce->length=htons(server_nonce->length);
     add_tlv(server_hello, server_nonce);
 }
-
-
-
 
 void server_add_certificate(tlv* server_hello){
     tlv* server_certificate = create_tlv(CERTIFICATE);
@@ -287,9 +290,6 @@ void server_add_certificate(tlv* server_hello){
     add_tlv(server_hello, server_certificate);
 }
 
-
-
-
 void load_pri_key(){
     // Get the server private key
     char *cwd = getcwd(NULL, 0);
@@ -310,19 +310,21 @@ void load_pri_key(){
     load_private_key(full_path);
 }
 
-
 void server_add_public_key(tlv* server_hello){
     tlv* server_public_key = create_tlv(PUBLIC_KEY);
-    // Load private key
-    load_pri_key();
-    derive_public_key();                          //fill server public key
+    // Certificate public key
+    load_pri_key();                 // Load server private key
+    derive_public_key();            // Using loaded private key, fill public_key with its public key
+
+    // Ephemeral public key
+    // generate_private_key();
+    // derive_public_key();
+
     add_val(server_public_key, public_key, pub_key_size);
     // server_public_key->length=htons(server_public_key->length);
     add_tlv(server_hello, server_public_key);
+    // load_pri_key(); 
 }
-
-
-
 
 void server_add_handshake_signature(tlv* server_hello){
     tlv* server_signature = create_tlv(HANDSHAKE_SIGNATURE);
@@ -368,7 +370,7 @@ void server_add_handshake_signature(tlv* server_hello){
     size_t sig_len = sign(signature, data, data_size);
     add_val(server_signature, signature, sig_len);
     // server_signature->length=htons(server_signature->length);
-    fprintf(stderr, "signature->length is %u\n", server_signature->length);
+    // fprintf(stderr, "signature->length is %u\n", server_signature->length);
     add_tlv(server_hello, server_signature);
 
 
@@ -378,9 +380,6 @@ void server_add_handshake_signature(tlv* server_hello){
     // print_tlv_bytes(serialized, serialized_len);
 
 }
-
-
-
 
 void verify_handshake_signature(tlv* hello_message){
     tlv* server_signature = create_tlv(HANDSHAKE_SIGNATURE);
@@ -523,9 +522,6 @@ uint16_t client_finished(tlv* message,  uint8_t* buf){
     return finished_len;
 }   
 
-
-
-
 void init_sec(int type, char* host) {
     // fprintf(stderr, "Entered init\n");
     init_io();
@@ -590,10 +586,9 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
             return len;
         }
-        else{   //Data stage
-            // uint16_t len=data_encryption(buf, max_length);
-            // return len;
-            return 0;
+        else{   //Client input Data stage
+            uint16_t len=data_encryption(buf, max_length);
+            return len;
         }
     }else{
         if (p_context.state.s_state==CLIENT_HELLO_RECEIVED){
@@ -609,8 +604,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             // server_hello->length=ntohs(server_hello->length);
 
 
-            //Deriving Diffie-Hellman Secret and ENC and MAC keys
-            generate_keys(buf, len);
 
             server_hello_message = malloc(server_hello->length);
             if (server_hello_message == NULL) {
@@ -622,6 +615,9 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             memcpy(server_hello_message, serialized, serialized_len);
             server_hello_message_len = serialized_len;
             // print_tlv_bytes(server_hello_message, server_hello_message_len);
+
+            //Deriving Diffie-Hellman Secret and ENC and MAC keys
+            generate_keys(buf, len);
 
             free_tlv(server_hello);
             
@@ -656,6 +652,11 @@ void output_sec(uint8_t* buf, size_t length) {
             }
             // client_hello->length=ntohs(client_hello->length);
 
+            // getting public keys from other side
+            tlv* public_key=get_tlv(message, PUBLIC_KEY);
+            // fprintf(stderr, "peer public key %p\n", ec_peer_public_key);
+            load_peer_public_key(public_key->val, public_key->length);
+            // fprintf(stderr, "peer public key %p\n", ec_peer_public_key);
             
             // Server storing client_hello
             client_hello_message = malloc(client_hello->length);
@@ -679,12 +680,12 @@ void output_sec(uint8_t* buf, size_t length) {
                 exit(6);
             }
             // transcript->length=ntohs(transcript->length);
-            verify_transcript(transcript);
-        }else if (p_context.state.s_state==SERVER_DATA_STAGE){
+            verify_transcript(message);
+        }else if (p_context.state.s_state==SERVER_DATA_STAGE){          //Server output
             tlv* iv = get_tlv(message, IV);
             tlv* ciphertext = get_tlv(message, CIPHERTEXT);
             tlv* mac = get_tlv(message, MAC);
-            data_decryption(iv, ciphertext, mac);
+            data_decryption(iv, ciphertext, mac);           //Client data_encryption
         }else{          //CLIENT_HELLO_RECEIVED
             return;
         }
@@ -705,10 +706,10 @@ void output_sec(uint8_t* buf, size_t length) {
 
             p_context.state.c_state=CLIENT_FINISHED;
         }else if (p_context.state.c_state==CLIENT_DATA_STAGE){
-            // tlv* iv = get_tlv(message, IV);
-            // tlv* ciphertext = get_tlv(message, CIPHERTEXT);
-            // tlv* mac = get_tlv(message, MAC);
-            // data_decryption(iv, ciphertext, mac);
+            tlv* iv = get_tlv(message, IV);
+            tlv* ciphertext = get_tlv(message, CIPHERTEXT);
+            tlv* mac = get_tlv(message, MAC);
+            data_decryption(iv, ciphertext, mac);
         }
         else{
             return;     //BEFORE_CLIENT_HELLO, shouldn't output anything
